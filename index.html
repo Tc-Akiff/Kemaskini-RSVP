@@ -14,9 +14,6 @@
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
   <style>
     body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; }
-    .bg-biru-soft { background-color: #dbeafe; }
-    .bg-hijau-soft { background-color: #dcfce7; }
-    .bg-putih-soft { background-color: #f8fafc; }
   </style>
 </head>
 <body class="bg-slate-50 text-slate-800 min-h-screen pb-16">
@@ -29,21 +26,18 @@
           <span class="text-2xl">🎳</span>
           <h1 class="text-xl sm:text-2xl font-bold tracking-tight">STRIKECOMMS@PENANG</h1>
         </div>
-        <p class="text-xs sm:text-sm text-slate-400 mt-1">Sistem Pengurusan & Kemas Kini Panggilan RSVP</p>
+        <p class="text-xs sm:text-sm text-slate-400 mt-1">Sistem RSVP Real-Time (Cloud Sync Akiff & Zul)</p>
       </div>
 
       <!-- Action Buttons -->
       <div class="flex flex-wrap items-center gap-2">
-        <button onclick="saveToStorage(true)" class="inline-flex items-center gap-1.5 px-3 py-2 bg-indigo-600 hover:bg-indigo-700 active:scale-95 text-white rounded-lg text-xs font-semibold shadow transition">
-          <i class="fa-solid fa-floppy-disk"></i> Simpan Data
-        </button>
         <button onclick="exportExcel()" class="inline-flex items-center gap-1.5 px-3 py-2 bg-emerald-600 hover:bg-emerald-700 active:scale-95 text-white rounded-lg text-xs font-semibold shadow transition">
           <i class="fa-solid fa-file-excel"></i> Export Excel
         </button>
         <button onclick="exportPDF()" class="inline-flex items-center gap-1.5 px-3 py-2 bg-rose-600 hover:bg-rose-700 active:scale-95 text-white rounded-lg text-xs font-semibold shadow transition">
           <i class="fa-solid fa-file-pdf"></i> Export PDF
         </button>
-        <button onclick="resetAllData()" class="inline-flex items-center gap-1.5 px-2.5 py-2 bg-slate-700 hover:bg-slate-600 text-slate-300 rounded-lg text-xs transition" title="Set semula ke data asal">
+        <button onclick="resetCloudData()" class="inline-flex items-center gap-1.5 px-2.5 py-2 bg-slate-700 hover:bg-slate-600 text-slate-300 rounded-lg text-xs transition" title="Set semula semua rekod">
           <i class="fa-solid fa-rotate-left"></i>
         </button>
       </div>
@@ -80,7 +74,7 @@
         </div>
         <div>
           <p class="text-xs text-slate-500 font-medium">Akiff (Biru)</p>
-          <p class="text-sm font-bold text-slate-800" id="statAkiff">12 Agensi (31 Kuota)</p>
+          <p class="text-sm font-bold text-slate-800" id="statAkiff">-</p>
         </div>
       </div>
 
@@ -90,7 +84,7 @@
         </div>
         <div>
           <p class="text-xs text-slate-500 font-medium">Zul Iman (Hijau)</p>
-          <p class="text-sm font-bold text-slate-800" id="statZul">10 Agensi (26 Kuota)</p>
+          <p class="text-sm font-bold text-slate-800" id="statZul">-</p>
         </div>
       </div>
     </div>
@@ -111,10 +105,12 @@
       </div>
     </div>
 
-    <!-- Status Notis Simpanan -->
+    <!-- Status Cloud Sync -->
     <div class="flex items-center justify-between px-1 mb-2">
-      <span class="text-xs text-slate-500" id="saveStatusIndicator"><i class="fa-solid fa-cloud-arrow-up text-emerald-500 mr-1"></i> Data disimpan secara automatik di pelayar ini.</span>
-      <span class="text-xs text-slate-400" id="lastSavedTime"></span>
+      <span class="text-xs" id="cloudStatusIndicator">
+        <i class="fa-solid fa-circle-notch fa-spin text-indigo-500 mr-1"></i> Menyambung ke pangkalan data awan...
+      </span>
+      <span class="text-xs text-slate-400" id="lastUpdatedTime"></span>
     </div>
 
     <!-- Jadual Senarai Agensi -->
@@ -134,7 +130,7 @@
             </tr>
           </thead>
           <tbody id="tableBody" class="divide-y divide-slate-200">
-            <!-- Data akan dijana melalui JavaScript -->
+            <!-- Data dari Database -->
           </tbody>
         </table>
       </div>
@@ -143,7 +139,7 @@
   </main>
 
   <script>
-    const STORAGE_KEY = 'STRIKECOMMS_TRACKER_DATA_FINAL';
+    const FIREBASE_DB_URL = "https://kemaskini-rsvp-default-rtdb.asia-southeast1.firebasedatabase.app";
 
     const defaultData = [
       { id: 1, name: "Pengurusan Tertinggi PSUKPP", quota: 3, current: 3, category: "biru", status: "none", notes: "" },
@@ -185,31 +181,42 @@
 
     let agenciesData = [];
     let currentFilter = 'all';
+    let isTyping = false;
+    let typingTimer = null;
 
-    function loadData() {
-      const saved = localStorage.getItem(STORAGE_KEY);
-      if (saved) {
-        try {
-          agenciesData = JSON.parse(saved);
-        } catch (e) {
+    async function fetchFromCloud() {
+      try {
+        const response = await fetch(`${FIREBASE_DB_URL}/agencies.json`);
+        const data = await response.json();
+        
+        if (data && Array.isArray(data)) {
+          agenciesData = data;
+        } else {
           agenciesData = JSON.parse(JSON.stringify(defaultData));
+          await saveToCloud();
         }
-      } else {
-        agenciesData = JSON.parse(JSON.stringify(defaultData));
+
+        document.getElementById('cloudStatusIndicator').innerHTML = `<i class="fa-solid fa-cloud text-emerald-500 mr-1"></i> <span class="text-emerald-700 font-semibold">Tersambung ke Cloud (Data Dikongsi Live)</span>`;
+        updateStats();
+        if (!isTyping) renderTable();
+      } catch (err) {
+        console.error("Gagal sambung database:", err);
+        document.getElementById('cloudStatusIndicator').innerHTML = `<i class="fa-solid fa-triangle-exclamation text-rose-500 mr-1"></i> <span class="text-rose-600 font-semibold">Sila pastikan Rules Firebase read/write = true</span>`;
       }
     }
 
-    function saveToStorage(showNotice = false) {
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(agenciesData));
-      updateStats();
-      const now = new Date();
-      document.getElementById('lastSavedTime').innerText = `Terakhir disimpan: ${now.toLocaleTimeString('ms-MY')}`;
-      if (showNotice) {
-        const ind = document.getElementById('saveStatusIndicator');
-        ind.innerHTML = `<i class="fa-solid fa-circle-check text-emerald-600 mr-1 font-bold"></i> <span class="text-emerald-700 font-semibold">Berjaya disimpan ke peranti!</span>`;
-        setTimeout(() => {
-          ind.innerHTML = `<i class="fa-solid fa-cloud-arrow-up text-emerald-500 mr-1"></i> Data disimpan secara automatik di pelayar ini.`;
-        }, 3000);
+    async function saveToCloud() {
+      try {
+        document.getElementById('lastUpdatedTime').innerText = `Menyimpan ke awan...`;
+        await fetch(`${FIREBASE_DB_URL}/agencies.json`, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(agenciesData)
+        });
+        const now = new Date();
+        document.getElementById('lastUpdatedTime').innerText = `Disimpan ke awan: ${now.toLocaleTimeString('ms-MY')}`;
+      } catch (e) {
+        console.error("Gagal simpan ke database:", e);
       }
     }
 
@@ -268,22 +275,13 @@
         else if (item.category === 'hijau') badgePic = `<span class="inline-flex items-center px-2 py-0.5 rounded text-[11px] font-semibold bg-emerald-100 text-emerald-800 border border-emerald-300">Zul Iman</span>`;
         else badgePic = `<span class="inline-flex items-center px-2 py-0.5 rounded text-[11px] font-semibold bg-slate-100 text-slate-600 border border-slate-300">Selesai</span>`;
 
-        let currentInputHtml = '';
-        if (isPutih) {
-          currentInputHtml = `<div class="font-bold text-slate-600 text-center"><i class="fa-solid fa-lock text-[10px] text-slate-400 mr-1"></i>${item.current}</div>`;
-        } else {
-          currentInputHtml = `
-            <input type="number" min="0" max="20" value="${item.current}" 
-              onchange="updateCurrent(${item.id}, this.value)"
-              class="w-16 mx-auto text-center font-bold text-slate-900 border rounded py-1 px-1 focus:ring-1 focus:ring-indigo-500 bg-white">
-          `;
-        }
+        let currentInputHtml = isPutih 
+          ? `<div class="font-bold text-slate-600 text-center"><i class="fa-solid fa-lock text-[10px] text-slate-400 mr-1"></i>${item.current}</div>`
+          : `<input type="number" min="0" max="20" value="${item.current}" onchange="updateCurrent(${item.id}, this.value)" class="w-16 mx-auto text-center font-bold text-slate-900 border rounded py-1 px-1 focus:ring-1 focus:ring-indigo-500 bg-white">`;
 
-        let statusSelectHtml = '';
-        if (isPutih) {
-          statusSelectHtml = `<span class="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-semibold bg-slate-100 text-slate-700 border border-slate-300"><i class="fa-solid fa-check-double text-slate-500"></i> Selesai Dicall</span>`;
-        } else {
-          statusSelectHtml = `
+        let statusSelectHtml = isPutih
+          ? `<span class="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-semibold bg-slate-100 text-slate-700 border border-slate-300"><i class="fa-solid fa-check-double text-slate-500"></i> Selesai Dicall</span>`
+          : `
             <select onchange="updateStatus(${item.id}, this.value)" class="w-full text-xs rounded-lg border py-1.5 px-2 font-medium focus:ring-1 focus:ring-indigo-500 
               ${item.status === 'done' ? 'bg-emerald-100 text-emerald-900 border-emerald-300 font-semibold' : ''}
               ${item.status === 'pending' ? 'bg-amber-100 text-amber-900 border-amber-300 font-semibold' : ''}
@@ -298,17 +296,10 @@
               <option value="cancelled" ${item.status === 'cancelled' ? 'selected' : ''}>❌ Batal / Tarik Diri</option>
             </select>
           `;
-        }
 
-        let notesHtml = '';
-        if (isPutih) {
-          notesHtml = `<div class="text-xs text-slate-500 italic py-1 px-2 bg-slate-100 rounded border border-slate-200">${item.notes || 'Sudah selesai dihubungi'}</div>`;
-        } else {
-          notesHtml = `
-            <textarea rows="1" oninput="updateNotesLive(${item.id}, this.value)" placeholder="Taip respons agensi..."
-              class="w-full text-xs rounded border border-slate-300 p-1.5 focus:bg-white focus:ring-1 focus:ring-indigo-500 bg-white/80 resize-y">${item.notes || ''}</textarea>
-          `;
-        }
+        let notesHtml = isPutih
+          ? `<div class="text-xs text-slate-500 italic py-1 px-2 bg-slate-100 rounded border border-slate-200">${item.notes || 'Sudah selesai dihubungi'}</div>`
+          : `<textarea rows="1" onfocus="isTyping=true" onblur="isTyping=false" oninput="updateNotesLive(${item.id}, this.value)" placeholder="Taip respons agensi..." class="w-full text-xs rounded border border-slate-300 p-1.5 focus:bg-white focus:ring-1 focus:ring-indigo-500 bg-white/80 resize-y">${item.notes || ''}</textarea>`;
 
         tr.innerHTML = `
           <td class="py-2.5 px-3 text-center font-bold text-slate-500">${item.id}</td>
@@ -327,21 +318,23 @@
       });
     }
 
-    function updateCurrent(id, val) {
+    async function updateCurrent(id, val) {
       const num = parseInt(val) || 0;
       const item = agenciesData.find(d => d.id === id);
       if (item && item.category !== 'putih') {
         item.current = Math.max(0, num);
-        saveToStorage();
+        updateStats();
+        await saveToCloud();
       }
     }
 
-    function updateStatus(id, val) {
+    async function updateStatus(id, val) {
       const item = agenciesData.find(d => d.id === id);
       if (item && item.category !== 'putih') {
         item.status = val;
-        saveToStorage();
+        updateStats();
         renderTable();
+        await saveToCloud();
       }
     }
 
@@ -349,29 +342,32 @@
       const item = agenciesData.find(d => d.id === id);
       if (item && item.category !== 'putih') {
         item.notes = val;
-        localStorage.setItem(STORAGE_KEY, JSON.stringify(agenciesData));
-        const now = new Date();
-        document.getElementById('lastSavedTime').innerText = `Terakhir disimpan: ${now.toLocaleTimeString('ms-MY')}`;
+        clearTimeout(typingTimer);
+        typingTimer = setTimeout(async () => {
+          await saveToCloud();
+        }, 1000);
       }
     }
 
-    function resetRow(id) {
+    async function resetRow(id) {
       const defaultItem = defaultData.find(d => d.id === id);
       const item = agenciesData.find(d => d.id === id);
       if (item && defaultItem && item.category !== 'putih') {
         item.current = defaultItem.current;
         item.status = defaultItem.status;
         item.notes = defaultItem.notes;
-        saveToStorage(true);
+        updateStats();
         renderTable();
+        await saveToCloud();
       }
     }
 
-    function resetAllData() {
-      if (confirm('Adakah anda pasti mahu set semula semua data kepada senarai asal?')) {
+    async function resetCloudData() {
+      if (confirm('Adakah anda pasti mahu set semula SEMUA data di Cloud kepada senarai asal?')) {
         agenciesData = JSON.parse(JSON.stringify(defaultData));
-        saveToStorage(true);
+        updateStats();
         renderTable();
+        await saveToCloud();
       }
     }
 
@@ -421,7 +417,7 @@
       XLSX.writeFile(wb, "Kemaskini_RSVP_StrikeComms.xlsx");
     }
 
-    // Export PDF (Tanpa teks anggaran lane bowling)
+    // Export PDF
     function exportPDF() {
       const { jsPDF } = window.jspdf;
       const doc = new jsPDF({ orientation: 'landscape', unit: 'mm', format: 'a4' });
@@ -429,7 +425,6 @@
       doc.setFontSize(14);
       doc.setFont('helvetica', 'bold');
       doc.text('SENARAI PERUNTUKAN DAN KEMASKINI STATUS PROGRAM STRIKECOMMS', 14, 15);
-      
       doc.setFontSize(10);
       doc.setFont('helvetica', 'normal');
       doc.text(`Tarikh Kemaskini: ${new Date().toLocaleDateString('ms-MY', { day: 'numeric', month: 'long', year: 'numeric' })}`, 14, 22);
@@ -499,10 +494,13 @@
       doc.save('Kemaskini_RSVP_StrikeComms.pdf');
     }
 
-    // Inisialisasi awal
-    loadData();
-    updateStats();
-    renderTable();
+    // Sambungan pertama & Auto-refresh cloud
+    fetchFromCloud();
+    setInterval(() => {
+      if (!isTyping) {
+        fetchFromCloud();
+      }
+    }, 4000);
   </script>
 </body>
 </html>
